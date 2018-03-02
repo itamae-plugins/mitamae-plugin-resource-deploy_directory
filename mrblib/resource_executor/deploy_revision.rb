@@ -143,6 +143,7 @@ module ::MItamae
           recipe = MItamae::Recipe.new(@resource.recipe.path, @resource.recipe).tap do |r|
             variables = {
               release_path: release_path,
+              new_resource: desired,
             }
             MItamae::RecipeContext.new(r, variables).instance_exec(&block)
           end
