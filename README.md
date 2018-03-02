@@ -5,6 +5,7 @@ MItamae plugin to reproduce the behavior of `deploy_revision` resource in Chef v
 ## Usage
 
 See https://github.com/itamae-kitchen/mitamae/blob/v1.5.6/PLUGINS.md.
+
 Put this repository as `./plugins/mitamae-plugin-resource-deploy_revision`,
 and execute `mitamae local` where you can find `./plugins` directory.
 
