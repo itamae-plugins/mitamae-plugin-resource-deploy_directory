@@ -431,6 +431,15 @@ module ::MItamae
             !::File.exist?(@destination) || Dir.entries(@destination).sort == ['.', '..']
           end
 
+          # https://github.com/chef/chef/blob/v12.13.37/lib/chef/provider/git.rb#L122-L129
+          def find_current_revision
+            MItamae.logger.debug("#{@log_prefix} finding current git revision")
+            if ::File.exist?(::File.join(@destination, '.git'))
+              result = git('-C', @destination, 'rev-parse', 'HEAD').stdout.strip
+            end
+            sha_hash?(result) ? result : nil
+          end
+
           def add_remotes
             if @additional_remotes.length > 0
               @additional_remotes.each_pair do |remote_name, remote_url|
@@ -508,10 +517,12 @@ module ::MItamae
             check_remote_command_result.stdout.strip.eql?(remote_url)
           end
 
+          # https://github.com/chef/chef/blob/v12.13.37/lib/chef/provider/git.rb#L221-L223
           def current_revision_matches_target_revision?
+            current_revision = find_current_revision
             # removing `to_i(16)` to work around mruby error: too big for integer (ArgumentError)
-            #(!@revision.nil?) && (target_revision.strip.to_i(16) == @revision.strip.to_i(16))
-            (!@revision.nil?) && (target_revision.strip == @revision.strip)
+            #(!current_revision.nil?) && (target_revision.strip.to_i(16) == current_revision.strip.to_i(16))
+            (!current_revision.nil?) && (target_revision.strip == current_revision.strip)
           end
 
           # https://github.com/chef/chef/blob/v12.13.37/lib/chef/provider/git.rb#L237-L259
