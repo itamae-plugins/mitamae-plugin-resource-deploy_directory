@@ -399,7 +399,7 @@ module ::MItamae
 
           def action_sync
             if existing_git_clone?
-              MItamae.logger.debug "#{@log_prefix} current revision: #{ 'TODO' } target revision: #{ 'TODO' }"
+              MItamae.logger.debug "#{@log_prefix} current revision: #{find_current_revision} target revision: #{target_revision}"
               unless current_revision_matches_target_revision?
                 fetch_updates
                 enable_submodules
