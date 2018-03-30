@@ -1,24 +1,24 @@
-# mitamae-plugin-resource-deploy\_revision
+# mitamae-plugin-resource-deploy\_directory
 
-MItamae plugin to reproduce the behavior of `deploy_revision` resource in Chef v12.13.37.
+Fork of https://github.com/k0kubun/mitamae-plugin-resource-deploy_revision
+to deploy a directory instead of pulling a git repository.
 
 ## Usage
 
 See https://github.com/itamae-kitchen/mitamae/blob/v1.5.6/PLUGINS.md.
 
-Put this repository as `./plugins/mitamae-plugin-resource-deploy_revision`,
+Put this repository as `./plugins/mitamae-plugin-resource-deploy_directory`,
 and execute `mitamae local` where you can find `./plugins` directory.
 
 ### Example
 
 ```rb
-deploy_revision 'app' do
-  revision 'master'
-  repository 'https://github.com/k0kubun/mitamae-plugin-resource-deploy_revision'
-  shallow_clone true
+deploy_directory 'app' do
+  source 'app'
+  revision 'abcdefg'
   user 'k0kubun'
   group 'k0kubun'
-  deploy_to '/home/k0kubun/mitamae/current'
+  deploy_to '/home/k0kubun/app'
 end
 ```
 
