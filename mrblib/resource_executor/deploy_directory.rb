@@ -4,7 +4,7 @@
 module ::MItamae
   module Plugin
     module ResourceExecutor
-      class DeployRevision < ::MItamae::ResourceExecutor::Base
+      class DeployDirectory < ::MItamae::ResourceExecutor::Base
         # Overriding https://github.com/itamae-kitchen/mitamae/blob/v1.5.6/mrblib/mitamae/resource_executor/base.rb#L31-L33,
         # and called at https://github.com/itamae-kitchen/mitamae/blob/v1.5.6/mrblib/mitamae/resource_executor/base.rb#L85
         # to reflect `desired` states which are not met in `current`.
@@ -53,20 +53,7 @@ module ::MItamae
 
         # https://github.com/chef/chef/blob/v12.13.37/lib/chef/provider/deploy.rb#L53-L57
         def load_current_resource
-          # git-only support
-          @scm_provider = GitProvider.new(
-            repository: desired.repository,
-            revision: desired.revision,
-            destination: desired.destination,
-            depth: desired.depth,
-            enable_checkout: desired.enable_checkout,
-            checkout_branch: desired.checkout_branch,
-            additional_remotes: desired.additional_remotes,
-            remote: desired.remote,
-            log_prefix: log_prefix,
-            runner: @runner, # MItamae's internal command runner
-          )
-          @release_path = File.join(desired.deploy_to, 'releases', @scm_provider.target_revision)
+          @release_path = File.join(desired.deploy_to, 'releases', desired.revision)
         end
 
         # The same as: https://github.com/chef/chef/blob/v12.13.37/lib/chef/provider/deploy.rb#L98-L112
@@ -103,7 +90,6 @@ module ::MItamae
         # https://github.com/chef/chef/blob/v12.13.37/lib/chef/provider/deploy.rb#L152-L168
         def deploy
           verify_directories_exist
-          update_cached_repo
           enforce_ownership
           copy_cached_repo
           install_gems
@@ -241,22 +227,13 @@ module ::MItamae
           "#{@resource.resource_type}[#{@resource.resource_name}]"
         end
 
-        def update_cached_repo
-          # no svn_force_export support
-          run_scm_sync
-        end
-
-        def run_scm_sync
-          @scm_provider.action_sync
-        end
-
         # TODO: Let gromnitsky/mruby-fileutils-simple have some missing options and use FileUtils in it.
         # Currently using `@runner.run_command` to bypass user change because `desired.user` is differently purposed in this resource.
         def copy_cached_repo
           target_dir_path = File.join(desired.deploy_to, 'releases')
           @runner.run_command(['rm', '-rf', release_path]) if ::File.exist?(release_path)
           @runner.run_command(['mkdir', '-p', target_dir_path])
-          @runner.run_command(['cp', '-rp', ::File.join(desired.destination, '.'), release_path])
+          @runner.run_command(['cp', '-rp', desired.source, release_path])
           MItamae.logger.info "#{log_prefix} copied the cached checkout to #{release_path}"
         end
 
@@ -367,228 +344,6 @@ module ::MItamae
           # Skipping Pathname#cleanpath because mitamae doesn't install it for now
           #path = Pathname.new(join(*parts)).cleanpath.to_s
           path.gsub(/[\\\{\}\[\]\*\?]/) { |x| "\\" + x }
-        end
-
-        # :sync, :checkout only implementation of https://github.com/chef/chef/blob/v12.13.37/lib/chef/provider/git.rb
-        class GitProvider
-          def initialize(options = {})
-            @repository = options.fetch(:repository)
-            @revision = options.fetch(:revision)
-            @destination = options.fetch(:destination)
-            @depth = options.fetch(:depth)
-            @enable_checkout = options.fetch(:enable_checkout)
-            @checkout_branch = options.fetch(:checkout_branch)
-            @additional_remotes = options.fetch(:additional_remotes)
-            @remote = options.fetch(:remote)
-            @log_prefix = options.fetch(:log_prefix)
-            @runner = options.fetch(:runner)
-          end
-
-          def action_checkout
-            if target_dir_non_existent_or_empty?
-              clone
-              if @enable_checkout
-                checkout
-              end
-              enable_submodules
-              add_remotes
-            else
-              MItamae.logger.debug "#{@log_prefix} checkout destination #{@destination} already exists or is a non-empty directory"
-            end
-          end
-
-          def action_sync
-            if existing_git_clone?
-              MItamae.logger.debug "#{@log_prefix} current revision: #{find_current_revision} target revision: #{target_revision}"
-              unless current_revision_matches_target_revision?
-                fetch_updates
-                enable_submodules
-                MItamae.logger.info "#{@log_prefix} updated to revision #{target_revision}"
-              end
-              add_remotes
-            else
-              action_checkout
-            end
-          end
-
-          def target_revision
-            @target_revision ||= begin
-              if sha_hash?(@revision)
-                @target_revision = @revision
-              else
-                @target_revision = remote_resolve_reference
-              end
-            end
-          end
-
-          private
-
-          def existing_git_clone?
-            ::File.exist?(::File.join(@destination, '.git'))
-          end
-
-          def target_dir_non_existent_or_empty?
-            !::File.exist?(@destination) || Dir.entries(@destination).sort == ['.', '..']
-          end
-
-          # https://github.com/chef/chef/blob/v12.13.37/lib/chef/provider/git.rb#L122-L129
-          def find_current_revision
-            MItamae.logger.debug("#{@log_prefix} finding current git revision")
-            if ::File.exist?(::File.join(@destination, '.git'))
-              result = git('-C', @destination, 'rev-parse', 'HEAD').stdout.strip
-            end
-            sha_hash?(result) ? result : nil
-          end
-
-          def add_remotes
-            if @additional_remotes.length > 0
-              @additional_remotes.each_pair do |remote_name, remote_url|
-                MItamae.logger.info "#{@log_prefix} adding git remote #{remote_name} = #{remote_url}"
-                setup_remote_tracking_branches(remote_name, remote_url)
-              end
-            end
-          end
-
-          def clone
-            # no remote change support
-
-            clone_cmd = ['clone']
-            clone_cmd << "--depth #{@depth}" if @depth
-            clone_cmd << "--no-single-branch" if @depth
-            clone_cmd << "\"#{@repository}\""
-            clone_cmd << "\"#{@destination}\""
-
-            MItamae.logger.info "#{@log_prefix} cloning repo #{@repository} to #{@destination}"
-            git clone_cmd
-          end
-
-          def checkout
-            sha_ref = target_revision
-
-            # checkout into a local branch rather than a detached HEAD
-            git('-C', @destination, 'branch', '-f', @checkout_branch, sha_ref)
-            git('-C', @destination, 'checkout', @checkout_branch)
-            MItamae.logger.info "#{@log_prefix} checked out branch: #{@revision} onto: #{@checkout_branch} reference: #{sha_ref}"
-          end
-
-          def enable_submodules
-            if @enable_submodules
-              MItamae.logger.info "#{@log_prefix} synchronizing git submodules"
-              git('-C', @destination, 'submodule', 'sync')
-              MItamae.logger.info "#{@log_prefix} enabling git submodules"
-              # the --recursive flag means we require git 1.6.5+ now, see CHEF-1827
-              git('-C', @destination, 'submodule', 'update', '--init', '--recursive')
-            end
-          end
-
-          def fetch_updates
-            setup_remote_tracking_branches(@remote, @repository)
-            # since we're in a local branch already, just reset to specified revision rather than merge
-            MItamae.logger.debug "Fetching updates from #{@remote} and resetting to revision #{target_revision}"
-            git('-C', @destination, "fetch", @remote)
-            git('-C', @destination, "fetch", @remote, "--tags")
-            git('-C', @destination, "reset", "--hard", target_revision)
-          end
-
-          def setup_remote_tracking_branches(remote_name, remote_url)
-            MItamae.logger.debug "#{@log_prefix} configuring remote tracking branches for repository #{remote_url} " + "at remote #{remote_name}"
-            check_remote_command = ["config", "--get", "remote.#{remote_name}.url"]
-            remote_status = git('-C', @destination, check_remote_command)
-            case remote_status.exit_status
-            when 0, 2
-              # * Status 0 means that we already have a remote with this name, so we should update the url
-              #   if it doesn't match the url we want.
-              # * Status 2 means that we have multiple urls assigned to the same remote (not a good idea)
-              #   which we can fix by replacing them all with our target url (hence the --replace-all option)
-
-              if multiple_remotes?(remote_status) || !remote_matches?(remote_url, remote_status)
-                git('-C', @destination, 'config', '--replace-all', "remote.#{remote_name}.url", remote_url)
-              end
-            when 1
-              git('-C', @destination, 'remote', 'add', remote_name, remote_url)
-            end
-          end
-
-          def multiple_remotes?(check_remote_command_result)
-            check_remote_command_result.exit_status == 2
-          end
-
-          def remote_matches?(remote_url, check_remote_command_result)
-            check_remote_command_result.stdout.strip.eql?(remote_url)
-          end
-
-          # https://github.com/chef/chef/blob/v12.13.37/lib/chef/provider/git.rb#L221-L223
-          def current_revision_matches_target_revision?
-            current_revision = find_current_revision
-            # removing `to_i(16)` to work around mruby error: too big for integer (ArgumentError)
-            #(!current_revision.nil?) && (target_revision.strip.to_i(16) == current_revision.strip.to_i(16))
-            (!current_revision.nil?) && (target_revision.strip == current_revision.strip)
-          end
-
-          # https://github.com/chef/chef/blob/v12.13.37/lib/chef/provider/git.rb#L237-L259
-          def remote_resolve_reference
-            MItamae.logger.debug("#{@log_prefix} resolving remote reference")
-            # The sha pointed to by an annotated tag is identified by the
-            # '^{}' suffix appended to the tag. In order to resolve
-            # annotated tags, we have to search for "revision*" and
-            # post-process. Special handling for 'HEAD' to ignore a tag
-            # named 'HEAD'.
-            @resolved_reference = git_ls_remote(rev_search_pattern)
-            refs = @resolved_reference.split("\n").map { |line| line.split("\t") }
-            # First try for ^{} indicating the commit pointed to by an
-            # annotated tag.
-            # It is possible for a user to create a tag named 'HEAD'.
-            # Using such a degenerate annotated tag would be very
-            # confusing. We avoid the issue by disallowing the use of
-            # annotated tags named 'HEAD'.
-            if rev_search_pattern != 'HEAD'
-              found = find_revision(refs, @revision, '^{}')
-            else
-              found = refs_search(refs, 'HEAD')
-            end
-            found = find_revision(refs, @revision) if found.empty?
-            found.size == 1 ? found.first[0] : nil
-          end
-
-          def find_revision(refs, revision, suffix = '')
-            found = refs_search(refs, rev_match_pattern('refs/tags/', revision) + suffix)
-            found = refs_search(refs, rev_match_pattern('refs/heads/', revision) + suffix) if found.empty?
-            found = refs_search(refs, revision + suffix) if found.empty?
-            found
-          end
-
-          def rev_match_pattern(prefix, revision)
-            if revision.start_with?(prefix)
-              revision
-            else
-              prefix + revision
-            end
-          end
-
-          def rev_search_pattern
-            if ['', 'HEAD'].include? @revision
-              'HEAD'
-            else
-              @revision + '*'
-            end
-          end
-
-          def git_ls_remote(rev_pattern)
-            git('ls-remote', "\"#{@repository}\"", "\"#{rev_pattern}\"").stdout
-          end
-
-          def refs_search(refs, pattern)
-            refs.find_all { |m| m[1] == pattern }
-          end
-
-          def git(*args)
-            git_command = ['git', args].compact.join(' ')
-            @runner.run_command(git_command)
-          end
-
-          def sha_hash?(string)
-            string =~ /\A[0-9a-f]{40}\z/
-          end
         end
       end
     end

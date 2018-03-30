@@ -3,11 +3,9 @@ module ::MItamae
   module Plugin
     module Resource
       # List of original attributes: https://github.com/chef/chef/blob/v12.13.37/lib/chef/resource/deploy.rb#L55-L85
-      class DeployRevision < ::MItamae::Resource::Base
+      class DeployDirectory < ::MItamae::Resource::Base
         define_attribute :action, default: :deploy
         define_attribute :revision, type: String, default: 'HEAD'
-        define_attribute :repository, type: String
-        define_attribute :shallow_clone, type: [TrueClass, FalseClass], default: false
         define_attribute :user, type: String
         define_attribute :group, type: String
         define_attribute :deploy_to, type: String
@@ -23,18 +21,14 @@ module ::MItamae
         define_attribute :after_restart, type: Proc
 
         define_attribute :migrate, type: [TrueClass, FalseClass], default: false
-        define_attribute :enable_checkout, type: [TrueClass, FalseClass], default: true
-        define_attribute :enable_submodules, type: [TrueClass, FalseClass], default: false
-        define_attribute :checkout_branch, type: String, default: 'deploy'
-        define_attribute :additional_remotes, type: Hash, default: {}
-        define_attribute :remote, type: String, default: 'origin'
         define_attribute :before_symlink, type: Proc
 
         # Default values of following attributes are automatically set in #process_attributes
         define_attribute :current_path, type: String
         define_attribute :shared_path, type: String
-        define_attribute :destination, type: String
-        define_attribute :depth, type: Integer
+
+        # deploy_directory's original attributes
+        define_attribute :source, type: String
 
         self.available_actions = [:deploy]
 
@@ -46,9 +40,6 @@ module ::MItamae
           end
           unless @attributes.key?(:shared_path)
             @attributes[:shared_path] = File.join(@attributes.fetch(:deploy_to), 'shared')
-          end
-          unless @attributes.key?(:destination)
-            @attributes[:destination] = File.join(@attributes.fetch(:shared_path), 'cached-copy')
           end
           unless @attributes.key?(:depth)
             @attributes[:depth] = @attributes[:shallow_clone] ? 5 : nil
