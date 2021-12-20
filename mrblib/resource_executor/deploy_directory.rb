@@ -76,7 +76,8 @@ module ::MItamae
           @release_path = target_release_path
 
           rp_index = all_releases.index(release_path)
-          releases_to_nuke = all_releases[(rp_index + 1)..-1]
+          chop = -1 - desired.keep_releases # always keep the `keep_releases` number of releases
+          releases_to_nuke = all_releases[(rp_index + 1)..chop]
 
           rollback
 
